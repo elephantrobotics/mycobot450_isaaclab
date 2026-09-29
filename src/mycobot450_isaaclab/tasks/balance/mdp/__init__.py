@@ -3,11 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Compatibility wrapper for ``isaaclab list_envs``."""
+"""This sub-module contains the functions that are specific to the environment."""
 
-import sys
+from isaaclab.utils.module import lazy_export
 
-from isaaclab.cli.commands.list_envs import command_list_envs
-
-if __name__ == "__main__":
-    command_list_envs(sys.argv[1:])
+lazy_export()

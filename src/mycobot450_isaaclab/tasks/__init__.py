@@ -3,11 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Compatibility wrapper for ``isaaclab list_envs``."""
+"""Task registrations for the project."""
 
-import sys
+from isaaclab_tasks.utils import import_packages
 
-from isaaclab.cli.commands.list_envs import command_list_envs
-
-if __name__ == "__main__":
-    command_list_envs(sys.argv[1:])
+import_packages(__name__, ["utils", ".mdp"])
