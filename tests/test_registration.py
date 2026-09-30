@@ -18,6 +18,20 @@ def test_task_registrations():
             "env_cfg_entry_point": "mycobot450_isaaclab.tasks.balance.config.cartpole.env_cfg:BalanceEnvCfg",
             "default_agent": "rsl_rl",
         },
+        "Mycobot450Isaaclab-Lift-Cube": {
+            "entry_point": "isaaclab.envs:ManagerBasedRLEnv",
+            "env_cfg_entry_point": (
+                "mycobot450_isaaclab.tasks.lift.config.mycobot450.joint_pos_env_cfg:Mycobot450CubeLiftEnvCfg"
+            ),
+            "default_agent": "rsl_rl",
+        },
+        "Mycobot450Isaaclab-Lift-Cube-Play": {
+            "entry_point": "isaaclab.envs:ManagerBasedRLEnv",
+            "env_cfg_entry_point": (
+                "mycobot450_isaaclab.tasks.lift.config.mycobot450.joint_pos_env_cfg:Mycobot450CubeLiftEnvCfg_PLAY"
+            ),
+            "default_agent": "rsl_rl",
+        },
     }
 
     for task_id, expected_values in expected.items():

@@ -1,0 +1,123 @@
+format: xrdf
+format_version: 2.0
+
+# Preview-only: sphere keys are USD paths under /mycobot_pro450.
+# Do not pass this file to cuMotion. Use config/robot.xrdf for planning.
+
+default_joint_positions:
+  joint1: 0.0
+  joint2: 0.0
+  joint3: 0.0
+  joint4: 0.0
+  joint5: 0.0
+  joint6: 0.0
+  joint2_left_joint: -1.01
+
+cspace:
+  joint_names:
+    - "joint1"
+    - "joint2"
+    - "joint3"
+    - "joint4"
+    - "joint5"
+    - "joint6"
+  acceleration_limits: [12.0, 12.0, 12.0, 12.0, 12.0, 12.0]
+  jerk_limits: [500.0, 500.0, 500.0, 500.0, 500.0, 500.0]
+
+tool_frames: ["f100_base_link"]
+
+world_collision:
+  geometry: "pro450_f100_collision_spheres"
+
+self_collision:
+  geometry: "pro450_f100_collision_spheres"
+
+geometry:
+  pro450_f100_collision_spheres:
+    spheres:
+      "Geometry/base_link":
+        - center: [-0.02450, 0.00000, 0.08750]
+          radius: 0.09950
+      "Geometry/base_link/Link1":
+        - center: [0.00000, -0.01990, -0.00950]
+          radius: 0.05300
+        - center: [0.00000, -0.01800, -0.00950]
+          radius: 0.05300
+      "Geometry/base_link/Link1/Link2":
+        - center: [-0.15769, -0.00000, 0.07550]
+          radius: 0.05400
+        - center: [-0.13835, -0.00000, 0.07550]
+          radius: 0.05400
+        - center: [-0.11901, -0.00000, 0.07550]
+          radius: 0.05400
+        - center: [-0.09967, -0.00000, 0.07550]
+          radius: 0.05400
+        - center: [-0.08033, -0.00000, 0.07550]
+          radius: 0.05400
+        - center: [-0.06099, -0.00000, 0.07550]
+          radius: 0.05400
+        - center: [-0.04165, -0.00000, 0.07550]
+          radius: 0.05400
+        - center: [-0.02231, -0.00000, 0.07550]
+          radius: 0.05400
+      "Geometry/base_link/Link1/Link2/Link3":
+        - center: [-0.14561, 0.00000, 0.01625]
+          radius: 0.05625
+        - center: [-0.12845, 0.00000, 0.01625]
+          radius: 0.05625
+        - center: [-0.11128, 0.00000, 0.01625]
+          radius: 0.05625
+        - center: [-0.09411, 0.00000, 0.01625]
+          radius: 0.05625
+        - center: [-0.07694, 0.00000, 0.01625]
+          radius: 0.05625
+        - center: [-0.05977, 0.00000, 0.01625]
+          radius: 0.05625
+        - center: [-0.04260, 0.00000, 0.01625]
+          radius: 0.05625
+        - center: [-0.02544, 0.00000, 0.01625]
+          radius: 0.05625
+      "Geometry/base_link/Link1/Link2/Link3/Link4":
+        - center: [0.00000, -0.02250, -0.00999]
+          radius: 0.04800
+        - center: [0.00000, -0.02000, -0.00999]
+          radius: 0.04800
+      "Geometry/base_link/Link1/Link2/Link3/Link4/Link5":
+        - center: [0.00000, -0.00885, -0.00725]
+          radius: 0.04525
+      "Geometry/base_link/Link1/Link2/Link3/Link4/Link5/Link6":
+        - center: [0.00000, 0.00021, -0.01652]
+          radius: 0.03600
+      "mygripper_f100/Geometry/f100_base_link":
+        - center: [0.04327, -0.00119, 0.01850]
+          radius: 0.05292
+      "mygripper_f100/Geometry/f100_base_link/joint2_left_link":
+        - center: [0.00425, 0.00287, 0.00000]
+          radius: 0.02365
+        - center: [0.04135, 0.00287, 0.00000]
+          radius: 0.02365
+      "mygripper_f100/Geometry/f100_base_link/joint1_left_link":
+        - center: [0.01367, -0.00467, 0.00000]
+          radius: 0.01867
+        - center: [0.04631, -0.00467, 0.00000]
+          radius: 0.01867
+      "mygripper_f100/Geometry/f100_base_link/joint2_left_link/joint3_left_link":
+        - center: [-0.00166, 0.01142, 0.00050]
+          radius: 0.02562
+        - center: [0.02238, 0.01142, 0.00050]
+          radius: 0.02562
+      "mygripper_f100/Geometry/f100_base_link/joint2_right_link":
+        - center: [0.00423, -0.00288, 0.00000]
+          radius: 0.02364
+        - center: [0.04136, -0.00288, 0.00000]
+          radius: 0.02364
+      "mygripper_f100/Geometry/f100_base_link/joint1_right_link":
+        - center: [0.01365, 0.00465, 0.00000]
+          radius: 0.01865
+        - center: [0.04634, 0.00465, 0.00000]
+          radius: 0.01865
+      "mygripper_f100/Geometry/f100_base_link/joint2_right_link/joint3_right_link":
+        - center: [-0.00167, -0.01142, 0.00000]
+          radius: 0.02561
+        - center: [0.02239, -0.01142, 0.00000]
+          radius: 0.02561
