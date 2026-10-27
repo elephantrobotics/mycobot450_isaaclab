@@ -10,13 +10,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxCollisionCfg, PhysxRigidBodyCfg
-
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils.configclass import configclass
+from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxCollisionCfg, PhysxRigidBodyCfg
+from isaaclab_physx.sim.spawners.materials import PhysxRigidBodyMaterialCfg
 
 from mycobot450_isaaclab.assets import MYCOBOT450_ISAACLAB_ASSETS_DIR
 
@@ -123,7 +123,7 @@ def _add_pad_box_colliders(root_prim) -> None:
         size=(0.028, 0.008, 0.022),
         visible=False,
         collision_props=PhysxCollisionCfg(contact_offset=0.001, rest_offset=0.0),
-        physics_material=sim_utils.RigidBodyMaterialCfg(
+        physics_material=PhysxRigidBodyMaterialCfg(
             static_friction=2.5,
             dynamic_friction=2.0,
             restitution=0.0,
@@ -222,7 +222,7 @@ MYCOBOT_PRO450_CFG = MycobotPro450ArticulationCfg(
             max_depenetration_velocity=5.0,
         ),
         collision_props=PhysxCollisionCfg(contact_offset=0.002, rest_offset=0.0),
-        physics_material=sim_utils.RigidBodyMaterialCfg(
+        physics_material=PhysxRigidBodyMaterialCfg(
             static_friction=2.0,
             dynamic_friction=1.5,
             restitution=0.0,
