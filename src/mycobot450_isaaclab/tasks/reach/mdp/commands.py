@@ -1,14 +1,15 @@
 """Forward kinematics and reachable end-effector pose sampling."""
 
-import math
 import xml.etree.ElementTree as ET
 
 import torch
 
 from isaaclab.envs.mdp.commands.pose_command import UniformPoseCommand
-from isaaclab.utils.math import combine_frame_transforms, quat_apply, quat_from_euler_xyz, quat_unique
+from isaaclab.utils.math import combine_frame_transforms, quat_from_euler_xyz, quat_unique
 
 from mycobot450_isaaclab.assets import MYCOBOT450_ISAACLAB_ASSETS_DIR
+from mycobot450_isaaclab.utils.reach_goals import GOAL_FAMILIES as GOAL_FAMILIES
+from mycobot450_isaaclab.utils.reach_goals import PoseReservoir
 
 
 class ArmKinematics:
@@ -44,10 +45,7 @@ class ArmKinematics:
         return torch.cat((position, quat_unique(orientation)), dim=-1)
 
 
-GOAL_FAMILIES = ("legacy", "down", "forward_left_down", "forward_right_down")
-
-
-class ReachPoseSampler:
+class ReachPoseSampler(PoseReservoir):
     """Seeded, in-memory FK reservoirs; no goal database or IK solution enters observations.
 
     +X of the gripper is its approach axis. Forward/left are +X/+Y of the robot
@@ -56,51 +54,48 @@ class ReachPoseSampler:
     """
 
     def __init__(self, cfg, device="cpu"):
-        if cfg.reservoir_size < 1:
-            raise ValueError("Goal reservoir_size must be positive")
-        self.fk = ArmKinematics(device)
-        self.generator = torch.Generator(device=device).manual_seed(cfg.sampling_seed)
-        self.device = device
-        banks = []
         ranges = cfg.ranges
-        low = torch.tensor([ranges.pos_x[0], ranges.pos_y[0], ranges.pos_z[0]], device=device)
-        high = torch.tensor([ranges.pos_x[1], ranges.pos_y[1], ranges.pos_z[1]], device=device)
-        directions = torch.tensor([[0, 0, -1], [0.5, 0.5, -(2**-0.5)], [0.5, -0.5, -(2**-0.5)]], device=device)
-        thresholds = torch.tensor([math.cos(math.radians(a)) for a in (8, 12, 12)], device=device)
-        axis = torch.tensor([1.0, 0.0, 0.0], device=device)
-        # Build all three new families together. Reservoirs are regenerated with
-        # a different seed for evaluation, so validation goals are unseen.
-        for bounds, families in ((cfg.joint_ranges, [0]), (cfg.diverse_joint_ranges, [1, 2, 3])):
-            bounds = torch.tensor(bounds, device=device)
-            collected = {family: [] for family in families}
-            counts = {family: 0 for family in families}
-            for _ in range(256):
-                q = bounds[:, 0] + torch.rand(65536, 6, generator=self.generator, device=device) * (
-                    bounds[:, 1] - bounds[:, 0]
-                )
-                poses = self.fk(q)
-                valid = ((poses[:, :3] >= low) & (poses[:, :3] <= high)).all(-1)
-                approach = quat_apply(poses[:, 3:], axis.expand(len(q), -1))
-                for family in families:
-                    mask = (
-                        valid
-                        if family == 0
-                        else valid & ((approach * directions[family - 1]).sum(-1) >= thresholds[family - 1])
-                    )
-                    accepted = q[mask][: max(0, cfg.reservoir_size - counts[family])]
-                    collected[family].append(accepted)
-                    counts[family] += len(accepted)
-                if all(count >= cfg.reservoir_size for count in counts.values()):
-                    break
-            else:
-                raise RuntimeError(f"Cannot fill reachable pose reservoirs: {counts}")
-            banks.extend(torch.cat(collected[family]) for family in families)
-        self.joints = torch.stack(banks)
-        self.poses = self.fk(self.joints.flatten(0, 1)).reshape(4, cfg.reservoir_size, 7)
+        super().__init__(
+            ArmKinematics(device),
+            (ranges.pos_x, ranges.pos_y, ranges.pos_z),
+            joint_ranges=cfg.joint_ranges,
+            diverse_joint_ranges=cfg.diverse_joint_ranges,
+            reservoir_size=cfg.reservoir_size,
+            sampling_seed=cfg.sampling_seed,
+            device=device,
+        )
+
+
+class OnlineLegacyPoseSampler:
+    """Fresh FK samples for basic reaching, without a finite training goal bank."""
+
+    def __init__(self, cfg, device="cpu"):
+        if tuple(cfg.family_weights) != (1.0, 0.0, 0.0, 0.0):
+            raise ValueError("Online legacy sampling requires legacy-only family weights")
+        self.fk = ArmKinematics(device)
+        self.device = device
+        self.bounds = torch.tensor(cfg.joint_ranges, device=device)
+        ranges = cfg.ranges
+        self.low = torch.tensor([ranges.pos_x[0], ranges.pos_y[0], ranges.pos_z[0]], device=device)
+        self.high = torch.tensor([ranges.pos_x[1], ranges.pos_y[1], ranges.pos_z[1]], device=device)
 
     def sample(self, families):
-        indices = torch.randint(self.joints.shape[1], families.shape, device=self.device)
-        return self.poses[families, indices], self.joints[families, indices]
+        joints = torch.empty(len(families), 6, device=self.device)
+        poses = torch.empty(len(families), 7, device=self.device)
+        remaining = torch.arange(len(families), device=self.device)
+        for _ in range(128):
+            if len(remaining) == 0:
+                return poses, joints
+            q = self.bounds[:, 0] + torch.rand(len(remaining), 6, device=self.device) * (
+                self.bounds[:, 1] - self.bounds[:, 0]
+            )
+            candidate = self.fk(q)
+            valid = ((candidate[:, :3] >= self.low) & (candidate[:, :3] <= self.high)).all(-1)
+            poses[remaining[valid]], joints[remaining[valid]] = candidate[valid], q[valid]
+            remaining = remaining[~valid]
+        if len(remaining):
+            raise RuntimeError("Cannot sample reachable legacy poses inside the workspace")
+        return poses, joints
 
 
 class ReachablePoseCommand(UniformPoseCommand):
@@ -113,7 +108,8 @@ class ReachablePoseCommand(UniformPoseCommand):
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        self.sampler = ReachPoseSampler(cfg, self.device)
+        sampler_type = OnlineLegacyPoseSampler if cfg.legacy_online_sampling else ReachPoseSampler
+        self.sampler = sampler_type(cfg, self.device)
         self.goal_joints = torch.zeros(self.num_envs, 6, device=self.device)
         self.goal_family = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.family_weights = torch.tensor(cfg.family_weights, device=self.device)
@@ -124,6 +120,10 @@ class ReachablePoseCommand(UniformPoseCommand):
         ids = torch.arange(self.num_envs, device=self.device)[env_ids]
         if len(ids) == 0:
             return
-        families = torch.multinomial(self.family_weights, len(ids), replacement=True)
+        families = (
+            torch.zeros(len(ids), dtype=torch.long, device=self.device)
+            if self.cfg.legacy_online_sampling
+            else torch.multinomial(self.family_weights, len(ids), replacement=True)
+        )
         self.pose_command_b[ids], self.goal_joints[ids] = self.sampler.sample(families)
         self.goal_family[ids] = families

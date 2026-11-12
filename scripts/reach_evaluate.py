@@ -35,6 +35,12 @@ def main():
     parser.add_argument("--goal_family", choices=("mixed", *GOAL_FAMILIES), default="mixed")
     parser.add_argument("--episode_seconds", type=float, default=12.0)
     parser.add_argument(
+        "--target_update_decimation",
+        type=int,
+        default=1,
+        help="1 preserves physics-step targets; policy decimation evaluates endpoint targets held for a policy period.",
+    )
+    parser.add_argument(
         "--trace", action="store_true", help="Include first-environment action/joint traces in the JSON."
     )
     parser.add_argument(
@@ -63,6 +69,8 @@ def main():
         parser.error(f"Checkpoint does not exist: {args.checkpoint}")
     if args.export_dir and not args.checkpoint:
         parser.error("export_dir requires a checkpoint")
+    if args.export_dir and args.target_update_decimation != 1:
+        parser.error("Endpoint-hold evaluation cannot export a policy under the original action contract")
     if args.switch_goals and args.goals:
         parser.error("switch_goals and goals are separate evaluation modes")
     goals = None
@@ -74,6 +82,11 @@ def main():
     task = "Mycobot450Isaaclab-Reach-Play"
     cfg, agent = resolve_task_config(task, "rsl_rl_cfg_entry_point")
     agent = handle_deprecated_rsl_rl_cfg(agent, check_rsl_rl_version())
+    if args.target_update_decimation not in (1, cfg.decimation):
+        parser.error("target_update_decimation must be 1 or the policy decimation")
+    if args.target_update_decimation != 1 and cfg.actions.arm_action.max_tracking_error is not None:
+        parser.error("Endpoint holds do not support the tracking-error integration guard")
+    cfg.actions.arm_action.target_update_decimation = args.target_update_decimation
     cfg.scene.num_envs = args.num_envs
     cfg.episode_length_s = args.episode_seconds
     cfg.seed = args.eval_seed
@@ -162,6 +175,9 @@ def main():
                         u.obs_buf = u.observation_manager.compute()
                         obs = env.get_observations()
                     first_goal = command.command.clone()
+                    first_families = list(families)
+                    initial_joints = robot.data.joint_pos.torch[:, ids].cpu().tolist()
+                    switch_state = {}
                     if policy is not None:
                         policy.reset(torch.ones(args.num_envs, device=u.device, dtype=torch.bool))
                     held = torch.ones(args.num_envs, dtype=torch.bool, device=u.device)
@@ -177,6 +193,19 @@ def main():
                     steps = u.max_episode_length - 1
                     for step in range(steps):
                         if args.switch_goals and step == steps // 2:
+                            # Instantaneous state before changing the goal, not a one-second hold test.
+                            first_pose_success = command.compute_success()
+                            switch_velocity = robot.data.joint_vel.torch[:, ids]
+                            switch_state = {
+                                "first_goal_pose_success_at_switch": first_pose_success.cpu().tolist(),
+                                "first_goal_settled_at_switch": (
+                                    first_pose_success & (switch_velocity.abs().max(-1).values < 0.1)
+                                )
+                                .cpu()
+                                .tolist(),
+                                "switch_joint_position_rad": robot.data.joint_pos.torch[:, ids].cpu().tolist(),
+                                "switch_joint_velocity_rad_s": switch_velocity.cpu().tolist(),
+                            }
                             command._resample_command(torch.arange(args.num_envs, device=u.device))
                             families = [GOAL_FAMILIES[i] for i in command.goal_family.tolist()]
                             u.obs_buf = u.observation_manager.compute()
@@ -248,12 +277,17 @@ def main():
                             torch.testing.assert_close(onnx_action, expected, rtol=1e-4, atol=1e-5)
                             for key, value in (("torchscript_max_abs", jit_action), ("onnx_max_abs", onnx_action)):
                                 export_errors[key] = max(export_errors[key], float((value - expected).abs().max()))
+                    final_joints = robot.data.joint_pos.torch[:, ids].cpu().tolist()
                     for i in range(args.num_envs):
                         records.append(
                             {
                                 "round": trial,
                                 "env": i,
                                 "goal_family": families[i],
+                                "first_goal_family": first_families[i],
+                                "initial_joint_position_rad": initial_joints[i],
+                                "final_joint_position_rad": final_joints[i],
+                                **{name: values[i] for name, values in switch_state.items()},
                                 "held_success": bool(held[i]),
                                 "settled_success": bool(settled[i]),
                                 "joint_velocity_rms_rad_s": float((motion[i, 0] / steps).sqrt()),
@@ -275,6 +309,7 @@ def main():
                 robot.data.body_quat_w.torch[:, command.body_idx],
             )
             result = {
+                "evaluation_role": "original_task",
                 "checkpoint": str(args.checkpoint.resolve()) if args.checkpoint else None,
                 "seed": args.eval_seed,
                 "sampling_seed": cfg.commands.ee_pose.sampling_seed,
@@ -333,12 +368,24 @@ def main():
                 "home_rad": robot.data.default_joint_pos.torch[0, ids].tolist(),
                 "step_dt": u.step_dt,
                 "action_contract": {
-                    "type": "filtered_joint_velocity_integrated_position_v1",
+                    "type": (
+                        "filtered_joint_velocity_integrated_position_v1"
+                        if cfg.actions.arm_action.max_tracking_error is None
+                        else "filtered_joint_velocity_integrated_position_guarded_v1"
+                    ),
                     "observation_dim": observation_dim,
                     "velocity_scale_rad_s": cfg.actions.arm_action.scale,
                     "filter_time_constant_s": cfg.actions.arm_action.time_constant,
+                    "max_tracking_error_rad": cfg.actions.arm_action.max_tracking_error,
                     "physics_dt_s": u.physics_dt,
                     "policy_dt_s": u.step_dt,
+                    "target_update_decimation": cfg.actions.arm_action.target_update_decimation,
+                    "target_update_mode": (
+                        "physics_step"
+                        if cfg.actions.arm_action.target_update_decimation == 1
+                        else "policy_endpoint_hold"
+                    ),
+                    "target_update_dt_s": u.physics_dt * cfg.actions.arm_action.target_update_decimation,
                     "joint_target_limits_rad": cfg.actions.arm_action.target_limits,
                     "reset": "position target = measured joints; filtered velocity = 0; previous action = 0",
                     "observation_slices": {
@@ -356,12 +403,19 @@ def main():
             }
             if args.trace:
                 result["trace"] = trace
+            if cfg.actions.arm_action.target_update_decimation != 1:
+                result["evaluation_role"] = "endpoint_hold_simulation_candidate"
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(result, indent=2) + "\n")
             if args.export_dir:
                 contract = {**result["action_contract"], "joint_order": names, "home_rad": result["home_rad"]}
                 (args.export_dir / "contract.json").write_text(json.dumps(contract, indent=2) + "\n")
-            print(json.dumps({k: v for k, v in result.items() if k not in ("records", "trace")}, indent=2))
+            print(
+                json.dumps(
+                    {k: v for k, v in result.items() if k not in ("records", "trace")},
+                    indent=2,
+                )
+            )
             completed = True
         finally:
             env.close()

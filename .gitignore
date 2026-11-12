@@ -15,3 +15,9 @@ wandb/
 .vscode/settings.json
 .vscode/launch.json
 pyrightconfig.json
+
+.venv-backup-*/
+AGENTS.md
+
+# Keep local regression tests out of the source delivery.
+/tests/

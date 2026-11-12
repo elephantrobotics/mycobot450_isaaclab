@@ -10,6 +10,7 @@ __all__ = [
     "pose_error",
     "target_velocity",
     "settled_success",
+    "reset_joints_from_reached_states",
 ]
 
 from .actions import SmoothJointVelocityAction
@@ -21,6 +22,7 @@ from .commands import (
     ReachPoseSampler,
 )
 from .commands_cfg import ReachablePoseCommandCfg
+from .events import reset_joints_from_reached_states
 from .observations import (
     filtered_target,
     pose_error,

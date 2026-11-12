@@ -1,142 +1,141 @@
 # mycobot450_isaaclab
 
-Isaac Lab reinforcement-learning tasks for the MyCobot Pro 450 with an F100 gripper.
+Reach reinforcement learning for the MyCobot Pro 450 with an F100 gripper,
+using Isaac Lab for training and simulation and pymycobot for deployment.
 
-## Requirements
-
-- Isaac Lab **release/3.0.0**, checked out beside this repository at `../IsaacLab`.
-- Isaac Sim **6.2.0** (package version `6.2.0.0` in `uv.lock`).
-- Python **3.12**, **uv**, **Git LFS**, and an NVIDIA GPU supported by Isaac Sim.
-
-Isaac Lab packages are editable dependencies pointing to the local source checkout.
-The lockfile does not pin that checkout's Git revision; use the matching
-`release/3.0.0` source when setting up another machine.
+The policy tracks `f100_base_link` with 43 observations and 6 actions at 30 Hz;
+physics runs at 120 Hz. Deployment uses host CPU inference, with measured robot
+motion displayed in Isaac Sim.
 
 ## Installation
 
-Run these commands from this repository's root:
+Requires Python 3.12, uv, Git LFS, Isaac Lab 3.0, and an NVIDIA GPU supported by
+Isaac Sim 6.2.0. Local dependency paths are configured in
+[pyproject.toml](pyproject.toml). Run commands from the project directory.
 
 ```bash
+git lfs install
 git lfs pull
 uv sync --locked --extra isaacsim
 ```
 
-Git LFS supplies the robot USD assets. Complete the NVIDIA Kit license prompt
-when launching Isaac Sim for the first time.
+## Training and export
 
-## Tasks
-
-| Task | Purpose |
-| --- | --- |
-| `Mycobot450Isaaclab-Reach` | Train the 450 + F100 end-effector pose-tracking policy. |
-| `Mycobot450Isaaclab-Reach-Play` | Play a trained Reach policy with visible target frames. |
-
-The template balance task has been removed. The existing cube-lift task remains
-in the repository as a legacy grasping example.
-
-## Reach
-
-The six arm joints track the pose of `f100_base_link`, the F100 mounting frame,
-while the gripper stays open. Targets include the original wrist orientations,
-vertically downward poses, and forward-left/right downward poses. Targets are
-sampled through forward kinematics within the robot's joint and workspace limits.
-
-The task uses the table dimensions and robot placement from
-`Isaac-Lift-Cable-Franka`. Joint-velocity actions are filtered and integrated into
-position targets to keep motion smooth. The policy uses 43 observations and six
-actions, running at 30 Hz with physics at 120 Hz.
-
-Check that the environment starts (this does not train a policy):
+Use a new output directory for each experiment.
 
 ```bash
-uv run --extra isaacsim isaaclab zero_agent \
-    --task Mycobot450Isaaclab-Reach --num_envs 4 --max_steps 120 \
-    --viz none physics=isaacsim_physx
+uv run --locked --extra isaacsim python scripts/reach_train.py \
+  --output_dir outputs/reach/tutorial/training
+
+uv run --locked --extra isaacsim python scripts/reach_evaluate.py \
+  --checkpoint outputs/reach/tutorial/training/model_final.pt \
+  --num_envs 128 --rounds 4 --eval_seed 2026 \
+  --export_dir outputs/reach/tutorial/exported --output outputs/reach/tutorial/evaluation.json \
+  physics=isaacsim_physx
+
+uv run --script src/mycobot450_isaaclab/utils/export_reach.py \
+  --checkpoint outputs/reach/tutorial/training/model_final.pt --policy outputs/reach/tutorial/exported/policy.pt \
+  --output outputs/reach/tutorial/bundle
 ```
 
-Train with RSL-RL (2048 environments by default; reduce `--num_envs` if needed):
+Defaults: 2048 environments, seed 42, 600 base-stage updates followed by 1000
+mixed-orientation updates. Reduce `--num_envs` if GPU memory is limited.
+
+Exports are saved as `policy.pt` and `policy.onnx`; deployment uses
+`bundle/policy.pt` with `contract.json`. Training saves the selected checkpoint
+as `training/model_final.pt` alongside its `params/` directory.
+
+## Simulation
+
+Check the exported policy, generate goals, and play the sequence:
 
 ```bash
-uv run --extra isaacsim isaaclab train \
-    --rl_library rsl_rl --task Mycobot450Isaaclab-Reach \
-    --viz none physics=isaacsim_physx
+uv run --script src/mycobot450_isaaclab/utils/deploy.py self-check \
+  --bundle outputs/reach/tutorial/bundle
 ```
-
-Play the latest Reach checkpoint in the Kit window:
 
 ```bash
-uv run --extra isaacsim isaaclab play \
-    --rl_library rsl_rl --task Mycobot450Isaaclab-Reach-Play \
-    --num_envs 1 --viz kit --real-time --checkpoint latest \
-    physics=isaacsim_physx
+uv run --script src/mycobot450_isaaclab/utils/deploy.py sample-goals \
+  --bundle outputs/reach/tutorial/bundle \
+  --sampler default --seed 2026 --count 24 --interval 22 \
+  --output outputs/reach/tutorial/goals.json
 ```
-
-Training logs and checkpoints are written to `logs/rsl_rl/reach_mycobot450_smooth/`.
-To select a specific model, replace `latest` with its checkpoint path. Checkpoints
-are generated locally and are not included in the repository. Use a checkpoint
-trained with the current 43-observation velocity-action interface; older
-position-action checkpoints are incompatible.
-
-If a sourced ROS or Conda environment causes Python or shared-library conflicts,
-prefix the command with `env -u PYTHONPATH -u LD_LIBRARY_PATH`. This only clears
-those variables for that command; it is not required in a clean environment.
-Keep `DISPLAY` set when opening the Kit window on the local desktop.
-
-## Evaluation and tests
-
-`scripts/` contains command-line tools for running simulations and writing results.
-`tests/` contains automated regression checks run by pytest.
-
-Evaluate a trained Reach checkpoint (replace `RUN` and `ITERATION`):
 
 ```bash
-uv run --extra isaacsim python scripts/reach_evaluate.py \
-    --checkpoint logs/rsl_rl/reach_mycobot450_smooth/RUN/model_ITERATION.pt \
-    --num_envs 64 --rounds 4 --eval_seed 123 \
-    --output outputs/reach/evaluation.json physics=isaacsim_physx
+uv run --locked --extra isaacsim python scripts/reach_play.py \
+  --policy outputs/reach/tutorial/bundle/policy.pt \
+  --goal-plan outputs/reach/tutorial/goals.json \
+  --time-scale 1 --target-update-decimation 4 \
+  --velocity-source finite_difference \
+  --steps 17160 --viz kit \
+  physics=isaacsim_physx
 ```
 
-The evaluator samples goals independently of the training seed and reports pose
-errors, success rates and joint-motion metrics. Each trial lasts 12 seconds by
-default. Held success requires position error below 2 cm and orientation error
-below 0.15 rad throughout the final second; settled success also requires every
-joint speed to remain below 0.1 rad/s. Omit `--checkpoint` for a zero-action baseline.
-Add `--switch_goals --episode_seconds 20` to check a transition between targets.
-Use `--help` for goal replay, motion traces and optional policy export settings.
-Generated reports belong under ignored `outputs/`.
+The sequence has 26 segments of 22 seconds (572 seconds total), including home
+at each end. Validation succeeds when the full run reports
+`Goal-plan validation passed: True`. Ctrl+C stops playback early. Reports are
+automatically saved to `outputs/reach/simulation/<timestamp>/report.json`.
 
-Run the registration and Reach regression checks without launching Isaac Sim:
+The plan separates sampling bounds (`goal_workspace_m`) from motion bounds
+(`motion_workspace_m`). Both default to X=0.12–0.35 m, Y=−0.20–0.20 m,
+Z=0.20–0.46 m relative to `base_link`. Check physical clearance before expanding
+motion bounds, then rerun simulation. Regenerate the plan when changing models.
+
+## Real robot
+
+After simulation passes, generate the hardware configuration:
 
 ```bash
-uv run --group dev pytest tests/test_registration.py tests/test_reach.py -q
+uv run --script src/mycobot450_isaaclab/utils/deploy.py init-config \
+  --bundle outputs/reach/tutorial/bundle \
+  --output outputs/reach/tutorial/hardware.json
 ```
 
-The registration tests check task names and loadable configurations. The Reach
-tests cover controller reset, smoothing, joint limits and target-pose sampling;
-they complement the simulator evaluation above.
+- Verify joint mapping, limits, F100 ID, and speed on the robot before setting
+  `calibration_verified: true`. Test command response and stopping first.
+- Homing requires joint signs +1, zero offsets, and F100 ID 14. Confirm the home
+  path; any extra clearance belongs in `home_motion_workspaces_m`.
+- Power on the robot, start its control service, and select position mode.
+  Empty the gripper, clear the arm, gripper, and cable paths, and remain beside
+  the emergency stop. Workspace checks cover only the mounting frame.
 
-## Reach source layout
+### Terminal A: Isaac Sim viewer
 
-```text
-src/mycobot450_isaaclab/tasks/reach/
-├── __init__.py
-├── config/
-│   ├── __init__.py
-│   └── mycobot450/
-│       ├── __init__.py                  # Train/play task registrations
-│       ├── mycobot450_reach_env_cfg.py  # Robot, scene and environment settings
-│       └── agents/
-│           ├── __init__.py
-│           └── rsl_rl_ppo_cfg.py        # PPO settings
-└── mdp/
-    ├── __init__.py
-    ├── __init__.pyi
-    ├── actions.py                      # Smooth joint control
-    ├── actions_cfg.py
-    ├── commands.py                     # Forward kinematics and target sampling
-    ├── commands_cfg.py
-    ├── observations.py
-    └── rewards.py
+From the project directory, use your robot's IP:
+
+```bash
+uv run --locked --extra isaacsim --with pymycobot==4.0.7 \
+  python scripts/reach_live.py \
+  --ip 192.168.0.232 --robot-port 4500 \
+  --bundle outputs/reach/tutorial/bundle \
+  --hardware-config outputs/reach/tutorial/hardware.json \
+  --port 14550 physics=isaacsim_physx
 ```
 
-The environment inherits the generic `ReachEnvCfg` from Isaac Lab.
+Wait for `SNAPSHOT` before starting Terminal B. The viewer displays measured
+feedback and sends no motion commands.
+
+### Terminal B: home and run (real motion)
+
+Open another terminal in the project directory and use the same robot IP:
+
+```bash
+uv run --script src/mycobot450_isaaclab/utils/deploy.py run \
+  --bundle outputs/reach/tutorial/bundle \
+  --hardware-config outputs/reach/tutorial/hardware.json \
+  --goal-plan outputs/reach/tutorial/goals.json \
+  --ip 192.168.0.232 --port 4500 \
+  --continuous --execute --allow-goal-jumps \
+  --home --home-speed 10 --open-gripper \
+  --command-hz 30 --time-scale 1 --duration 0 \
+  --telemetry-port 14550
+```
+
+The robot opens the gripper, homes at SDK speed 10, then runs the policy at
+30 Hz, cycling the goal plan until Ctrl+C or a protection/fault stop
+(`--duration 0`). Homing failure blocks policy execution.
+
+Stop with **Ctrl+C in Terminal B** and wait for confirmation. Closing the viewer
+does not stop the robot. Faults stop execution without automatic retry or homing.
+Logs are saved under `outputs/reach/deploy/`; check pose errors and
+`final_second_tracking_success` in the report as well as `passed`.

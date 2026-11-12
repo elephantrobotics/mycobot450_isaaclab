@@ -16,6 +16,7 @@ from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.core.reach.reach_env_cfg import ReachEnvCfg
 from isaaclab_tasks.utils import PresetCfg
 
+from mycobot450_isaaclab.assets.lighting import configure_arm_lighting
 from mycobot450_isaaclab.assets.robots.mycobot_pro450 import (
     MYCOBOT_PRO450_CFG,
     MYCOBOT_PRO450_EE_BODY_NAME,
@@ -26,6 +27,7 @@ from ...mdp import (
     SmoothJointVelocityActionCfg,
     filtered_target,
     pose_error,
+    reset_joints_from_reached_states,
     settled_success,
     target_velocity,
 )
@@ -53,12 +55,13 @@ class ReachEventsCfg:
         params={"reset_joint_targets": True},
     )
     reset_robot_joints = EventTermCfg(
-        func=mdp.reset_joints_by_offset,
+        func=reset_joints_from_reached_states,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINTS, preserve_order=True),
             "position_range": (-0.05, 0.05),
             "velocity_range": (0.0, 0.0),
+            "reached_state_probability": 0.0,
         },
     )
 
@@ -73,22 +76,7 @@ class Mycobot450ReachEnvCfg(ReachEnvCfg):
         self.scene.env_spacing = 1.5
         # Moderate ambient and front fill keep the white arm readable, while
         # the stronger oblique key light preserves curved surfaces and edges.
-        self.scene.light = AssetBaseCfg(
-            prim_path="/World/light",
-            spawn=sim_utils.DomeLightCfg(color=(0.9, 0.95, 1.0), intensity=200.0),
-        )
-        self.scene.key_light = AssetBaseCfg(
-            prim_path="/World/key_light",
-            # XYZW quaternion: Euler XYZ (-30, -35, 0) degrees; shines down from -X/+Y.
-            init_state=AssetBaseCfg.InitialStateCfg(rot=(-0.24684011, -0.2904595, -0.07782839, 0.92121983)),
-            spawn=sim_utils.DistantLightCfg(color=(1.0, 0.95, 0.9), intensity=650.0, angle=5.0),
-        )
-        self.scene.fill_light = AssetBaseCfg(
-            prim_path="/World/fill_light",
-            # Shine from the default viewer's +X/+Y side into the arm's shadows.
-            init_state=AssetBaseCfg.InitialStateCfg(rot=(-0.24684011, 0.2904595, 0.07782839, 0.92121983)),
-            spawn=sim_utils.DistantLightCfg(color=(1.0, 1.0, 1.0), intensity=350.0, angle=20.0),
-        )
+        configure_arm_lighting(self.scene)
         # Match FrankaCableSceneCfg's table and robot-to-table placement.
         # The table top and robot base are at z=0; the ground is at z=-1.05.
         self.scene.table = AssetBaseCfg(
