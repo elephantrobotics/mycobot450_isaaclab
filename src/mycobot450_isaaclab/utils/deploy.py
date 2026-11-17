@@ -47,13 +47,14 @@ else:
     from robot_interface import Pro450Interface, prepare_stream
 
 
-def hardware_template(controller):
-    return {
+def hardware_template(controller, profile="basic"):
+    if profile not in ("basic", "streaming"):
+        raise ValueError("Hardware profile must be basic or streaming")
+    data = {
         "joint_order": JOINT_NAMES,
         "sign": [1] * 6,
         "offset_rad": [0.0] * 6,
         "joint_limits_rad": controller.limits.tolist(),
-        "calibration_verified": False,
         "streaming_and_stop_verified": False,
         "verified_command_hz": None,
         "verification_notes": "",
@@ -66,6 +67,24 @@ def hardware_template(controller):
         "max_goal_angle_rad": 0.25,
         "home_motion_workspaces_m": [],
     }
+    if profile == "streaming":
+        data.update(
+            sdk_speed=15,
+            action_gain=0.25,
+            target_lead_limit_rad=0.1,
+            max_tracking_error_rad=0.25,
+            max_new_target_error_rad=0.28,
+            max_measured_velocity_rad_s=1.0,
+            motion_guard={
+                "version": 1,
+                "tracking_soft_rad": 0.15,
+                "new_target_soft_rad": 0.18,
+                "tracking_grace_s": 0.3,
+                "speed_soft_rad_s": 0.85,
+                "speed_window_s": 0.2,
+            },
+        )
+    return data
 
 
 class HardwareConfig:
@@ -104,11 +123,20 @@ class HardwareConfig:
         elif any(name in data for name in ("max_new_target_error_rad", "target_lead_limit_rad", "action_gain")):
             raise ValueError("Runtime target limits and action_gain require motion_guard configuration")
 
+    def _require_joint_mapping(self):
+        # The standard 450 mapping is fixed; only custom signs/zeros need an explicit record.
+        if (self.sign == 1).all() and (self.offset == 0).all():
+            return
+        if self.data.get("calibration_verified") is not True:
+            raise ValueError(
+                "Custom joint signs or zero offsets require calibration_verified=true after validating the mapping. "
+                "The standard MyCobot Pro 450 mapping uses sign=[1,1,1,1,1,1] and offset_rad=[0,0,0,0,0,0]."
+            )
+
     def require_execution_ready(self, command_hz=120.0):
         if "motion_guard" in self.data:
             raise ValueError("Development motion guards require --continuous --response-trial")
-        if self.data["calibration_verified"] is not True:
-            raise ValueError("Verify joint signs, zeros and limits before enabling execution")
+        self._require_joint_mapping()
         if self.data["streaming_and_stop_verified"] is not True or not self.data["verification_notes"].strip():
             raise ValueError("Command streaming and stopping are not verified; use probe/run without --execute")
         verified = self.data.get("verified_command_hz")
@@ -117,8 +145,7 @@ class HardwareConfig:
 
     def require_continuous_ready(self, command_hz, time_scale=1.0, *, response_trial=False, duration=None):
         """Explicit continuous exploration; it does not certify indefinite operation."""
-        if self.data["calibration_verified"] is not True:
-            raise ValueError("Verify the SDK-to-simulation joint mapping before continuous execution")
+        self._require_joint_mapping()
         if type(time_scale) not in (int, float) or time_scale not in (1.0, 0.5, 0.25):
             raise ValueError("time_scale must be 1, 0.5 or 0.25")
         if not math.isfinite(command_hz) or not (
@@ -825,6 +852,22 @@ def main():
         p.add_argument("--bundle", type=Path, required=True)
         if name in ("init-config", "sample-goals"):
             p.add_argument("--output", type=Path, required=True)
+        if name == "init-config":
+            p.add_argument(
+                "--profile",
+                choices=("basic", "streaming"),
+                default="basic",
+                help="Streaming uses SDK speed 15, action gain .25, lead .1 rad and requires run --response-trial",
+            )
+            p.add_argument(
+                "--home-motion-workspace",
+                type=float,
+                nargs=6,
+                action="append",
+                default=[],
+                metavar=("XMIN", "XMAX", "YMIN", "YMAX", "ZMIN", "ZMAX"),
+                help="Additional cleared mount-motion box for homing only, in metres; repeat for multiple boxes",
+            )
         if name == "sample-goals":
             p.add_argument(
                 "--sampler",
@@ -843,6 +886,20 @@ def main():
             p.add_argument("--joint-step", type=float, default=0.15)
             p.add_argument("--position-step", type=float, default=0.035)
             p.add_argument("--angle-step", type=float, default=0.15)
+            p.add_argument(
+                "--motion-workspace",
+                type=float,
+                nargs=6,
+                metavar=("XMIN", "XMAX", "YMIN", "YMAX", "ZMIN", "ZMAX"),
+                help="Explicit mount-motion bounds in metres; does not change goal sampling or certify clearance",
+            )
+            p.add_argument(
+                "--transition-after",
+                type=int,
+                nargs="+",
+                default=[],
+                help="Insert an FK midpoint goal after these 1-based original goal numbers; requires default sampler",
+            )
         if name == "run":
             p.add_argument("--hardware-config", type=Path, required=True)
             p.add_argument(
@@ -946,11 +1003,16 @@ def main():
         return
     policy = ReachPolicy(args.bundle)
     if args.command == "init-config":
+        data = hardware_template(policy.controller, args.profile)
+        data["home_motion_workspaces_m"] = [
+            HomeMotionBounds._bounds([box[i : i + 2] for i in range(0, 6, 2)], 3, "home_motion_workspaces_m").tolist()
+            for box in args.home_motion_workspace
+        ]
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("x") as file:
-            json.dump(hardware_template(policy.controller), file, indent=2)
+            json.dump(data, file, indent=2)
             file.write("\n")
-        print(f"Unverified hardware configuration: {args.output}")
+        print(f"MyCobot Pro 450 + F100 hardware configuration ({args.profile}): {args.output}")
     elif args.command == "sample-goals":
         sampling_options = {"seed": args.seed, "count": args.count, "interval_s": args.interval}
         if args.sampler == "default":
@@ -958,9 +1020,15 @@ def main():
                 policy.controller,
                 policy.contract["policy_sha256"],
                 policy.contract["kinematic_chain"],
+                motion_workspace=(
+                    [args.motion_workspace[i : i + 2] for i in range(0, 6, 2)] if args.motion_workspace else None
+                ),
+                transition_after=args.transition_after,
                 **sampling_options,
             )
         else:
+            if args.motion_workspace or args.transition_after:
+                parser.error("--motion-workspace and --transition-after require --sampler default")
             plan = sample_plan(
                 policy.controller,
                 policy.contract["policy_sha256"],

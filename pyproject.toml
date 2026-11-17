@@ -9,7 +9,7 @@ build-backend = "uv_build"
 
 [project]
 name = "mycobot450_isaaclab"
-version = "0.2.0"
+version = "0.2.1"
 description = "Isaac Lab environments for mycobot450_isaaclab."
 readme = "README.md"
 license = { file = "LICENSE" }

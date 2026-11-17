@@ -406,6 +406,8 @@ def sample_default_plan(
     interval_s=10.0,
     reservoir_size=DEFAULT_RESERVOIR_SIZE,
     sampling_seed=DEFAULT_SAMPLING_SEED,
+    motion_workspace=None,
+    transition_after=(),
 ):
     """Home, N independent default-family targets, then home; no step filtering.
 
@@ -447,6 +449,22 @@ def sample_default_plan(
             }
         )
     goals.append(copy.deepcopy(home))
+    if any(type(i) is not int or not 1 <= i < len(goals) for i in transition_after):
+        raise ValueError("transition_after must contain 1-based original goal numbers before the final goal")
+    transitions = sorted(set(transition_after))
+    for index in reversed(transitions):
+        # The midpoint is a Cartesian goal only; witness joints are never sent to the robot.
+        joints = (
+            torch.tensor(goals[index - 1]["witness_joint_rad"]) + torch.tensor(goals[index]["witness_joint_rad"])
+        ) / 2
+        goals.insert(
+            index,
+            {
+                "pose_xyz_xyzw": controller.fk(joints).tolist(),
+                "witness_joint_rad": joints.tolist(),
+                "family": f"transition_{index}_to_{index + 1}",
+            },
+        )
     data = {
         "version": 2,
         "policy_sha256": policy_sha256,
@@ -454,7 +472,9 @@ def sample_default_plan(
         "interval_s": interval_s,
         "joint_bounds_rad": controller.limits.tolist(),
         "goal_workspace_m": controller.workspace.tolist(),
-        "motion_workspace_m": controller.workspace.tolist(),
+        "motion_workspace_m": controller.workspace.tolist()
+        if motion_workspace is None
+        else copy.deepcopy(motion_workspace),
         "goals": goals,
         "sampling": {
             "method": "default_four_family_independent",
@@ -476,5 +496,8 @@ def sample_default_plan(
             ),
         },
     }
+    if transitions:
+        data["sampling"]["method"] = "default_four_family_with_joint_midpoint_transitions"
+        data["sampling"]["transition_after_1based"] = transitions
     GoalPlan.from_data(data, controller, policy_sha256)
     return data
