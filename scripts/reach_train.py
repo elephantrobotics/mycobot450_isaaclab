@@ -38,7 +38,7 @@ def prepare_continuation(source: Path, destination: Path, exploration_std: float
     return checkpoint["iter"]
 
 
-def training_command(*, num_envs, seed, iterations, timestamp, stage, checkpoint=None):
+def training_command(*, num_envs, seed, iterations, timestamp, stage, checkpoint=None, viz="none"):
     """Use the upstream training CLI; only the documented stage settings differ."""
     if stage not in ("base", "mixed", "transfer"):
         raise ValueError("stage must be base, mixed or transfer")
@@ -72,7 +72,7 @@ def training_command(*, num_envs, seed, iterations, timestamp, stage, checkpoint
         "--run_name",
         stage,
         "--viz",
-        "none",
+        viz,
     ]
     if checkpoint is not None:
         command += [
@@ -142,6 +142,7 @@ def main():
     parser.add_argument("--base_iterations", type=int, default=600)
     parser.add_argument("--mixed_iterations", type=int, default=1000)
     parser.add_argument("--transfer_iterations", type=int, default=200)
+    parser.add_argument("--viz", choices=("none", "kit"), default="none", help="Visualizer for all training stages.")
     parser.add_argument("--output_dir", type=Path, default=Path("outputs/reach/training"))
     args = parser.parse_args()
     if (args.stage in ("mixed", "transfer")) != (args.checkpoint is not None):
@@ -220,6 +221,7 @@ def main():
                 timestamp=timestamp,
                 stage=stage,
                 checkpoint=source,
+                viz=args.viz,
             )
             manifest["commands"].append(command)
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")

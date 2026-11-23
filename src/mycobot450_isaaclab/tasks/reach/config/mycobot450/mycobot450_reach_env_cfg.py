@@ -116,6 +116,7 @@ class Mycobot450ReachEnvCfg(ReachEnvCfg):
         self.commands.ee_pose = ReachablePoseCommandCfg(
             asset_name="robot",
             body_name=MYCOBOT_PRO450_EE_BODY_NAME,
+            debug_vis=True,
             ranges=self.commands.ee_pose.ranges,
             resampling_time_range=(1.0e9, 1.0e9),
         )

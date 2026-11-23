@@ -57,7 +57,8 @@ and checkpoint selection.
 
 ```bash
 uv run --locked --extra isaacsim python scripts/reach_train.py \
-  --output_dir outputs/reach/tutorial/run
+  --output_dir outputs/reach/tutorial/run \
+  --viz kit
 ```
 
 Evaluate and export the final checkpoint:

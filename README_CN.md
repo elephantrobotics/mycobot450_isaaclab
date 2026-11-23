@@ -40,7 +40,8 @@ mixed 训练后，脚本自动用固定目标和切换目标评估最后三个 c
 
 ```bash
 uv run --locked --extra isaacsim python scripts/reach_train.py \
-  --output_dir outputs/reach/tutorial/run
+  --output_dir outputs/reach/tutorial/run \
+  --viz kit
 ```
 
 评估并导出最终的 checkpoint：
